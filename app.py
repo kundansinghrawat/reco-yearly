@@ -18,7 +18,11 @@ def direction_to_sign(direction: str) -> int:
 
 @st.cache_data
 def load_starting_inventory() -> pd.DataFrame:
-    path = os.path.join(BASE_DIR, "STARTING INVENTORY", "SKUbyBIN_1_APR_2025.xlsx")
+    folder = os.path.join(BASE_DIR, "STARTING INVENTORY")
+    files = glob.glob(os.path.join(folder, "*.xlsx"))
+    if not files:
+        return pd.DataFrame(columns=["SKU", "LocCode", "Starting Qty"])
+    path = files[0]  # use the first (and typically only) file
     df = pd.read_excel(path, usecols=["SKU", "LocCode", "Total Qty"])
     df["SKU"] = df["SKU"].astype(str).str.strip().str.upper()
     df["LocCode"] = df["LocCode"].astype(str).str.strip().str.upper()
@@ -31,6 +35,8 @@ def load_starting_inventory() -> pd.DataFrame:
 def load_ending_inventory() -> pd.DataFrame:
     folder = os.path.join(BASE_DIR, "ENDING INVENTORY")
     files = glob.glob(os.path.join(folder, "*.csv"))
+    if not files:
+        return pd.DataFrame(columns=["SKU", "LocCode", "Actual Ending Qty"])
     dfs = [pd.read_csv(f, usecols=["SKU", "LocCode", "Total Qty"]) for f in files]
     df = pd.concat(dfs, ignore_index=True)
     df["SKU"] = df["SKU"].astype(str).str.strip().str.upper()
@@ -44,6 +50,10 @@ def load_ending_inventory() -> pd.DataFrame:
 def load_transactions() -> pd.DataFrame:
     base = os.path.join(BASE_DIR, "Transaction")
     files = glob.glob(os.path.join(base, "**", "*.xlsx"), recursive=True)
+    if not files:
+        return pd.DataFrame(columns=["SKU", "LocCode", "Quantity", "Direction",
+                                      "Transaction Type", "Transaction Date", "Reference No",
+                                      "Sign", "Net Qty"])
     dfs = []
     for f in files:
         df = pd.read_excel(
@@ -68,6 +78,9 @@ def reconcile(
     ending_df: pd.DataFrame,
     tx_df: pd.DataFrame,
 ) -> pd.DataFrame:
+    starting_df = starting_df.copy()
+    ending_df = ending_df.copy()
+    tx_df = tx_df.copy()
     # Normalize keys (in case inputs come from tests with mixed case)
     for df in [starting_df, ending_df, tx_df]:
         if "SKU" in df.columns:
@@ -94,9 +107,9 @@ def reconcile(
     df = df.merge(ending_df, on=["SKU", "LocCode"], how="left")
     df = df.merge(net_tx, on=["SKU", "LocCode"], how="left")
 
-    df["Starting Qty"] = df["Starting Qty"].fillna(0)
-    df["Net Transactions"] = df["Net Transactions"].fillna(0)
-    df["Actual Ending Qty"] = df["Actual Ending Qty"].fillna(0)
+    df["Starting Qty"] = pd.to_numeric(df["Starting Qty"], errors="coerce").fillna(0)
+    df["Net Transactions"] = pd.to_numeric(df["Net Transactions"], errors="coerce").fillna(0)
+    df["Actual Ending Qty"] = pd.to_numeric(df["Actual Ending Qty"], errors="coerce").fillna(0)
     df["Expected Ending Qty"] = df["Starting Qty"] + df["Net Transactions"]
     df["Variance"] = df["Expected Ending Qty"] - df["Actual Ending Qty"]
 

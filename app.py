@@ -492,6 +492,11 @@ def main():
         accept_multiple_files=True,
         key="transactions",
     )
+    price_file = st.sidebar.file_uploader(
+        "Price File (.xlsx or .csv) — optional",
+        type=["xlsx", "csv"],
+        key="price",
+    )
 
     all_uploaded = starting_file and ending_file and tx_files
     if not all_uploaded:
@@ -534,6 +539,12 @@ def main():
             )
             st.session_state["recon_result"] = reconcile(starting, ending, transactions)
             st.session_state["tx_data"] = transactions
+            if price_file:
+                st.session_state["price_data"] = parse_price(
+                    price_file.getvalue(), price_file.name
+                )
+            else:
+                st.session_state.pop("price_data", None)
 
     if "recon_result" not in st.session_state:
         st.stop()

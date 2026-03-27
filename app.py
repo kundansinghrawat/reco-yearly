@@ -707,6 +707,8 @@ def main():
         else:
             price_df = st.session_state["price_data"]
             price_recon = filtered_recon.merge(price_df, on="SKU", how="left")
+            # Track unmatched rows (NaN from left join) BEFORE filling with 0
+            no_price_mask = price_recon["Unit Price"].isna()
             price_recon["Unit Price"] = pd.to_numeric(
                 price_recon["Unit Price"], errors="coerce"
             ).fillna(0)
@@ -715,13 +717,13 @@ def main():
             price_recon["Actual Ending Value"] = price_recon["Actual Ending Qty"] * price_recon["Unit Price"]
             price_recon["Variance Value"] = price_recon["Variance"] * price_recon["Unit Price"]
 
-            no_price = int((price_recon["Unit Price"] == 0).sum())
+            no_price = int(no_price_mask.sum())
             if no_price > 0:
                 st.warning(f"⚠ {no_price} SKU+Location rows have no price match — their value columns show 0.")
 
             total_inv_value = price_recon["Actual Ending Value"].sum()
             total_var_value = price_recon["Variance Value"].abs().sum()
-            skus_priced = int((price_recon["Unit Price"] > 0).sum())
+            skus_priced = int((~no_price_mask).sum())
             _price_kpi_cards(total_inv_value, total_var_value, skus_priced, len(price_recon))
 
             price_cols = [

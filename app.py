@@ -1,9 +1,8 @@
-import streamlit as st
-import pandas as pd
-import glob
-import os
+import io
+from datetime import date as _date
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+import pandas as pd
+import streamlit as st
 
 
 def direction_to_sign(direction: str) -> int:
@@ -16,14 +15,35 @@ def direction_to_sign(direction: str) -> int:
     return 0
 
 
+_TX_TYPE_SIGN = {
+    "transfer out": -1,
+    "adjustment": -1,
+    "sales": -1,
+    "customer return": 1,
+    "non returnable goods issue": 1,
+    "receiving": 1,
+    "vendor return": -1,
+}
+
+
+def transaction_sign(tx_type: str, direction: str) -> int:
+    """Determine sign from Transaction Type; fall back to Direction if type is unknown."""
+    t = str(tx_type).strip().lower()
+    if t in _TX_TYPE_SIGN:
+        return _TX_TYPE_SIGN[t]
+    return direction_to_sign(direction)
+
+
+def _read_file(file_bytes: bytes, filename: str) -> pd.DataFrame:
+    """Read xlsx or csv based on file extension."""
+    if filename.lower().endswith(".csv"):
+        return pd.read_csv(io.BytesIO(file_bytes))
+    return pd.read_excel(io.BytesIO(file_bytes))
+
+
 @st.cache_data
-def load_starting_inventory() -> pd.DataFrame:
-    folder = os.path.join(BASE_DIR, "STARTING INVENTORY")
-    files = glob.glob(os.path.join(folder, "*.xlsx"))
-    if not files:
-        return pd.DataFrame(columns=["SKU", "LocCode", "Starting Qty"])
-    path = files[0]  # use the first (and typically only) file
-    df = pd.read_excel(path, usecols=["SKU", "LocCode", "Total Qty"])
+def parse_starting_inventory(file_bytes: bytes, filename: str) -> pd.DataFrame:
+    df = _read_file(file_bytes, filename)[["SKU", "LocCode", "Total Qty"]]
     df["SKU"] = df["SKU"].astype(str).str.strip().str.upper()
     df["LocCode"] = df["LocCode"].astype(str).str.strip().str.upper()
     df = df.rename(columns={"Total Qty": "Starting Qty"})
@@ -32,13 +52,8 @@ def load_starting_inventory() -> pd.DataFrame:
 
 
 @st.cache_data
-def load_ending_inventory() -> pd.DataFrame:
-    folder = os.path.join(BASE_DIR, "ENDING INVENTORY")
-    files = glob.glob(os.path.join(folder, "*.csv"))
-    if not files:
-        return pd.DataFrame(columns=["SKU", "LocCode", "Actual Ending Qty"])
-    dfs = [pd.read_csv(f, usecols=["SKU", "LocCode", "Total Qty"]) for f in files]
-    df = pd.concat(dfs, ignore_index=True)
+def parse_ending_inventory(file_bytes: bytes, filename: str) -> pd.DataFrame:
+    df = _read_file(file_bytes, filename)[["SKU", "LocCode", "Total Qty"]]
     df["SKU"] = df["SKU"].astype(str).str.strip().str.upper()
     df["LocCode"] = df["LocCode"].astype(str).str.strip().str.upper()
     df = df.rename(columns={"Total Qty": "Actual Ending Qty"})
@@ -47,27 +62,24 @@ def load_ending_inventory() -> pd.DataFrame:
 
 
 @st.cache_data
-def load_transactions() -> pd.DataFrame:
-    base = os.path.join(BASE_DIR, "Transaction")
-    files = glob.glob(os.path.join(base, "**", "*.xlsx"), recursive=True)
-    if not files:
+def parse_transactions(files_bytes: tuple, filenames: tuple) -> pd.DataFrame:
+    """files_bytes: tuple of bytes; filenames: tuple of original file names."""
+    if not files_bytes:
         return pd.DataFrame(columns=["SKU", "LocCode", "Quantity", "Direction",
                                       "Transaction Type", "Transaction Date", "Reference No",
                                       "Sign", "Net Qty"])
     dfs = []
-    for f in files:
-        df = pd.read_excel(
-            f,
-            usecols=["locCode", "SKU", "Quantity", "Direction",
-                     "Transaction Type", "Transaction Date", "Reference No"],
-        )
+    for b, name in zip(files_bytes, filenames):
+        raw = _read_file(b, name)
+        df = raw[["locCode", "SKU", "Quantity", "Direction",
+                  "Transaction Type", "Transaction Date", "Reference No"]]
         dfs.append(df)
     tx = pd.concat(dfs, ignore_index=True)
     tx = tx.rename(columns={"locCode": "LocCode"})
     tx["SKU"] = tx["SKU"].astype(str).str.strip().str.upper()
     tx["LocCode"] = tx["LocCode"].astype(str).str.strip().str.upper()
     tx["Quantity"] = pd.to_numeric(tx["Quantity"], errors="coerce").fillna(0)
-    tx["Sign"] = tx["Direction"].apply(direction_to_sign)
+    tx["Sign"] = tx.apply(lambda r: transaction_sign(r["Transaction Type"], r["Direction"]), axis=1)
     tx["Net Qty"] = tx["Quantity"] * tx["Sign"]
     tx["Transaction Date"] = pd.to_datetime(tx["Transaction Date"], dayfirst=True, errors="coerce")
     return tx
@@ -123,6 +135,21 @@ def reconcile(
         return "Discrepancy"
 
     df["Status"] = df.apply(classify, axis=1)
+
+    # ── Transaction type bifurcation ─────────────────────────────────
+    if "Transaction Type" in tx_df.columns and "Net Qty" in tx_df.columns:
+        pivot = (
+            tx_df.groupby(["SKU", "LocCode", "Transaction Type"])["Net Qty"]
+            .sum()
+            .unstack(fill_value=0)
+            .reset_index()
+        )
+        pivot.columns.name = None
+        pivot = pivot.rename(columns={c: f"TX: {c}" for c in pivot.columns if c not in ["SKU", "LocCode"]})
+        df = df.merge(pivot, on=["SKU", "LocCode"], how="left")
+        for col in [c for c in df.columns if c.startswith("TX: ")]:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
     return df
 
 
@@ -130,11 +157,54 @@ def main():
     st.set_page_config(page_title="Inventory Reconciliation", layout="wide")
     st.title("Inventory Reconciliation Dashboard")
 
-    with st.spinner("Loading data (this may take a moment)..."):
-        starting = load_starting_inventory()
-        ending = load_ending_inventory()
-        transactions = load_transactions()
-        recon = reconcile(starting, ending, transactions)
+    # ── File Uploads ─────────────────────────────────────────────────
+    st.sidebar.header("Upload Files")
+    starting_file = st.sidebar.file_uploader(
+        "Starting Inventory (.xlsx or .csv)", type=["xlsx", "csv"], key="starting"
+    )
+    ending_file = st.sidebar.file_uploader(
+        "Ending Inventory (.xlsx or .csv)", type=["xlsx", "csv"], key="ending"
+    )
+    tx_files = st.sidebar.file_uploader(
+        "Transaction Files (.xlsx or .csv) — select all quarters at once",
+        type=["xlsx", "csv"],
+        accept_multiple_files=True,
+        key="transactions",
+    )
+
+    all_uploaded = starting_file and ending_file and tx_files
+    if not all_uploaded:
+        st.info(
+            "**Upload all three file sets in the sidebar to begin:**\n\n"
+            "1. Starting Inventory (xlsx or csv)\n"
+            "2. Ending Inventory (xlsx or csv)\n"
+            "3. Transaction files — select all files at once (xlsx or csv)"
+        )
+        st.stop()
+
+    st.sidebar.divider()
+
+    st.success(f"✅ {len(tx_files)} transaction file(s) uploaded. Ready to reconcile.")
+    run_clicked = st.button("▶ Run Reconciliation", type="primary", use_container_width=True)
+
+    if run_clicked:
+        with st.spinner("Processing files and running reconciliation..."):
+            starting = parse_starting_inventory(starting_file.getvalue(), starting_file.name)
+            ending = parse_ending_inventory(ending_file.getvalue(), ending_file.name)
+            transactions = parse_transactions(
+                tuple(f.getvalue() for f in tx_files),
+                tuple(f.name for f in tx_files),
+            )
+            st.session_state["recon_result"] = reconcile(starting, ending, transactions)
+            st.session_state["tx_data"] = transactions
+
+    if "recon_result" not in st.session_state:
+        st.stop()
+
+    recon = st.session_state["recon_result"]
+    transactions = st.session_state["tx_data"]
+
+    st.sidebar.divider()
 
     # ── Sidebar Filters ──────────────────────────────────────────────
     st.sidebar.header("Filters")
@@ -144,13 +214,10 @@ def main():
 
     sku_filter = st.sidebar.text_input("SKU Search (partial match)").strip().upper()
 
-    from datetime import date as _date
     _date_min = transactions["Transaction Date"].min()
     _date_max = transactions["Transaction Date"].max()
-    _fallback_min = _date(2025, 1, 1)
-    _fallback_max = _date.today()
-    safe_min = _date_min.date() if pd.notna(_date_min) else _fallback_min
-    safe_max = _date_max.date() if pd.notna(_date_max) else _fallback_max
+    safe_min = _date_min.date() if pd.notna(_date_min) else _date(2025, 1, 1)
+    safe_max = _date_max.date() if pd.notna(_date_max) else _date.today()
     date_range = st.sidebar.date_input(
         "Transaction Date Range (Tab 4 only)",
         value=[safe_min, safe_max],
@@ -219,6 +286,13 @@ def main():
             else:
                 st.info("No variances found — everything matches!")
 
+    tx_type_cols = [c for c in filtered_recon.columns if c.startswith("TX: ")]
+    detail_cols = (
+        ["SKU", "LocCode", "Starting Qty"]
+        + tx_type_cols
+        + ["Net Transactions", "Expected Ending Qty", "Actual Ending Qty", "Variance", "Status"]
+    )
+
     # ── Tab 2: Full Detail ───────────────────────────────────────────
     with tab2:
         status_opts = ["All"] + sorted(filtered_recon["Status"].unique().tolist())
@@ -228,14 +302,7 @@ def main():
             if status_filter == "All"
             else filtered_recon[filtered_recon["Status"] == status_filter]
         )
-        st.dataframe(
-            detail_df[[
-                "SKU", "LocCode", "Starting Qty", "Net Transactions",
-                "Expected Ending Qty", "Actual Ending Qty", "Variance", "Status",
-            ]],
-            use_container_width=True,
-            height=600,
-        )
+        st.dataframe(detail_df[detail_cols], use_container_width=True, height=600)
 
     # ── Tab 3: Discrepancies ─────────────────────────────────────────
     with tab3:
@@ -248,17 +315,11 @@ def main():
         )
         st.write(f"**{len(disc_df)} discrepant rows**")
         st.dataframe(
-            disc_df[[
-                "SKU", "LocCode", "Starting Qty", "Net Transactions",
-                "Expected Ending Qty", "Actual Ending Qty", "Variance", "Status",
-            ]],
+            disc_df[detail_cols],
             use_container_width=True,
             height=600,
         )
-        csv_bytes = disc_df[[
-            "SKU", "LocCode", "Starting Qty", "Net Transactions",
-            "Expected Ending Qty", "Actual Ending Qty", "Variance", "Status",
-        ]].to_csv(index=False).encode("utf-8")
+        csv_bytes = disc_df[detail_cols].to_csv(index=False).encode("utf-8")
         st.download_button(
             label="Download Discrepancies as CSV",
             data=csv_bytes,

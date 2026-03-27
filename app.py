@@ -144,23 +144,28 @@ def main():
 
     sku_filter = st.sidebar.text_input("SKU Search (partial match)").strip().upper()
 
-    date_min = transactions["Transaction Date"].min()
-    date_max = transactions["Transaction Date"].max()
+    from datetime import date as _date
+    _date_min = transactions["Transaction Date"].min()
+    _date_max = transactions["Transaction Date"].max()
+    _fallback_min = _date(2025, 1, 1)
+    _fallback_max = _date.today()
+    safe_min = _date_min.date() if pd.notna(_date_min) else _fallback_min
+    safe_max = _date_max.date() if pd.notna(_date_max) else _fallback_max
     date_range = st.sidebar.date_input(
-        "Transaction Date Range",
-        value=[date_min.date(), date_max.date()],
-        min_value=date_min.date(),
-        max_value=date_max.date(),
+        "Transaction Date Range (Tab 4 only)",
+        value=[safe_min, safe_max],
+        min_value=safe_min,
+        max_value=safe_max,
     )
 
     # Apply filters
     filtered_recon = recon[recon["LocCode"].isin(selected_locs)].copy()
     if sku_filter:
-        filtered_recon = filtered_recon[filtered_recon["SKU"].str.contains(sku_filter, na=False)]
+        filtered_recon = filtered_recon[filtered_recon["SKU"].str.contains(sku_filter, na=False, regex=False)]
 
     filtered_tx = transactions[transactions["LocCode"].isin(selected_locs)].copy()
     if sku_filter:
-        filtered_tx = filtered_tx[filtered_tx["SKU"].str.contains(sku_filter, na=False)]
+        filtered_tx = filtered_tx[filtered_tx["SKU"].str.contains(sku_filter, na=False, regex=False)]
     if len(date_range) == 2:
         start_dt = pd.Timestamp(date_range[0])
         end_dt = pd.Timestamp(date_range[1])
@@ -168,6 +173,10 @@ def main():
             (filtered_tx["Transaction Date"] >= start_dt) &
             (filtered_tx["Transaction Date"] <= end_dt)
         ]
+
+    if not selected_locs:
+        st.warning("No locations selected — please choose at least one location from the sidebar.")
+        st.stop()
 
     # ── Tabs ─────────────────────────────────────────────────────────
     tab1, tab2, tab3, tab4 = st.tabs(
@@ -246,7 +255,10 @@ def main():
             use_container_width=True,
             height=600,
         )
-        csv_bytes = disc_df.to_csv(index=False).encode("utf-8")
+        csv_bytes = disc_df[[
+            "SKU", "LocCode", "Starting Qty", "Net Transactions",
+            "Expected Ending Qty", "Actual Ending Qty", "Variance", "Status",
+        ]].to_csv(index=False).encode("utf-8")
         st.download_button(
             label="Download Discrepancies as CSV",
             data=csv_bytes,
@@ -257,13 +269,13 @@ def main():
     # ── Tab 4: Transaction Breakdown ─────────────────────────────────
     with tab4:
         key_options = sorted(
-            filtered_recon.apply(lambda r: f"{r['SKU']} | {r['LocCode']}", axis=1).tolist()
+            (filtered_recon["SKU"] + " | " + filtered_recon["LocCode"]).tolist()
         )
         if not key_options:
             st.info("No data matches current filters.")
         else:
             selected_key = st.selectbox("Select SKU + Location", key_options)
-            sel_sku, sel_loc = [x.strip() for x in selected_key.split("|")]
+            sel_sku, sel_loc = [x.strip() for x in selected_key.split("|", maxsplit=1)]
             tx_detail = filtered_tx[
                 (filtered_tx["SKU"] == sel_sku) &
                 (filtered_tx["LocCode"] == sel_loc)

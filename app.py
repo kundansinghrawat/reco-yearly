@@ -594,8 +594,8 @@ def main():
         st.stop()
 
     # ── Tabs ─────────────────────────────────────────────────────────
-    tab1, tab2, tab3, tab4 = st.tabs(
-        ["📊  Summary", "📋  Full Detail", "⚠️  Discrepancies", "🔍  Transaction Breakdown"]
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+        ["📊  Summary", "📋  Full Detail", "⚠️  Discrepancies", "🔍  Transaction Breakdown", "💰  Price Analysis"]
     )
 
     tx_type_cols = [c for c in filtered_recon.columns if c.startswith("TX: ")]
@@ -688,6 +688,63 @@ def main():
                 ]].sort_values("Transaction Date"),
                 use_container_width=True,
                 height=500,
+            )
+
+    # ── Tab 5: Price Analysis ─────────────────────────────────────────
+    with tab5:
+        if "price_data" not in st.session_state:
+            st.markdown("""
+            <div style="background:white;border-radius:14px;padding:2rem 2.5rem;
+                        box-shadow:0 2px 10px rgba(0,0,0,0.07);max-width:520px;margin:2rem auto;text-align:center;">
+                <div style="font-size:2.5rem;margin-bottom:1rem;">💰</div>
+                <div style="font-size:1.1rem;font-weight:600;color:#1B2A4A;margin-bottom:0.5rem;">Price File Not Uploaded</div>
+                <div style="font-size:0.85rem;color:#6B7C93;line-height:1.7;">
+                    Upload a Price file (.xlsx or .csv) with <b>SKU</b> and <b>Price</b> columns
+                    in the sidebar, then click ▶ Run Reconciliation.
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            price_df = st.session_state["price_data"]
+            price_recon = filtered_recon.merge(price_df, on="SKU", how="left")
+            price_recon["Unit Price"] = pd.to_numeric(
+                price_recon["Unit Price"], errors="coerce"
+            ).fillna(0)
+            price_recon["Starting Value"] = price_recon["Starting Qty"] * price_recon["Unit Price"]
+            price_recon["Expected Ending Value"] = price_recon["Expected Ending Qty"] * price_recon["Unit Price"]
+            price_recon["Actual Ending Value"] = price_recon["Actual Ending Qty"] * price_recon["Unit Price"]
+            price_recon["Variance Value"] = price_recon["Variance"] * price_recon["Unit Price"]
+
+            no_price = int((price_recon["Unit Price"] == 0).sum())
+            if no_price > 0:
+                st.warning(f"⚠ {no_price} SKU+Location rows have no price match — their value columns show 0.")
+
+            total_inv_value = price_recon["Actual Ending Value"].sum()
+            total_var_value = price_recon["Variance Value"].abs().sum()
+            skus_priced = int((price_recon["Unit Price"] > 0).sum())
+            _price_kpi_cards(total_inv_value, total_var_value, skus_priced, len(price_recon))
+
+            price_cols = [
+                "SKU", "LocCode", "Unit Price",
+                "Starting Value", "Expected Ending Value",
+                "Actual Ending Value", "Variance Value", "Status",
+            ]
+            c1, c2 = st.columns([6, 2])
+            with c1:
+                st.markdown(
+                    f"<div style='font-size:0.8rem;color:#8896A5;margin-bottom:0.5rem;'>{len(price_recon):,} rows</div>",
+                    unsafe_allow_html=True,
+                )
+            with c2:
+                csv_bytes = price_recon[price_cols].to_csv(index=False).encode("utf-8")
+                st.download_button(
+                    "⬇ Download CSV", data=csv_bytes,
+                    file_name="price_analysis.csv", mime="text/csv",
+                    use_container_width=True,
+                )
+            st.dataframe(
+                _style_table(price_recon[price_cols]),
+                use_container_width=True, height=580,
             )
 
 

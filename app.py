@@ -313,6 +313,41 @@ def _kpi_cards(total, matched, pct_matched, discrepancies, missing, new_in_endin
     """, unsafe_allow_html=True)
 
 
+def _price_kpi_cards(total_inv_value, total_var_value, skus_priced, total):
+    pct_priced = round(skus_priced / total * 100, 1) if total > 0 else 0.0
+    st.markdown(f"""
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin-bottom:1.5rem;">
+
+        <div style="background:linear-gradient(135deg,#1E3A8A,#2563EB);border-radius:18px;
+                    padding:1.4rem 1.5rem;box-shadow:0 8px 24px rgba(37,99,235,0.3);color:white;position:relative;overflow:hidden;">
+            <div style="position:absolute;top:-15px;right:-15px;width:80px;height:80px;
+                        border-radius:50%;background:rgba(255,255,255,0.08);"></div>
+            <div style="font-size:0.65rem;text-transform:uppercase;letter-spacing:1.4px;opacity:0.75;font-weight:700;">Total Inventory Value</div>
+            <div style="font-size:2rem;font-weight:800;line-height:1.15;margin-top:0.5rem;">{total_inv_value:,.0f}</div>
+        </div>
+
+        <div style="background:linear-gradient(135deg,#7F1D1D,#EF4444);border-radius:18px;
+                    padding:1.4rem 1.5rem;box-shadow:0 8px 24px rgba(239,68,68,0.3);color:white;position:relative;overflow:hidden;">
+            <div style="position:absolute;top:-15px;right:-15px;width:80px;height:80px;
+                        border-radius:50%;background:rgba(255,255,255,0.08);"></div>
+            <div style="font-size:0.65rem;text-transform:uppercase;letter-spacing:1.4px;opacity:0.75;font-weight:700;">Total Variance Value</div>
+            <div style="font-size:2rem;font-weight:800;line-height:1.15;margin-top:0.5rem;">{total_var_value:,.0f}</div>
+            <div style="font-size:0.75rem;opacity:0.8;margin-top:0.1rem;">absolute sum</div>
+        </div>
+
+        <div style="background:linear-gradient(135deg,#064E3B,#10B981);border-radius:18px;
+                    padding:1.4rem 1.5rem;box-shadow:0 8px 24px rgba(16,185,129,0.3);color:white;position:relative;overflow:hidden;">
+            <div style="position:absolute;top:-15px;right:-15px;width:80px;height:80px;
+                        border-radius:50%;background:rgba(255,255,255,0.08);"></div>
+            <div style="font-size:0.65rem;text-transform:uppercase;letter-spacing:1.4px;opacity:0.75;font-weight:700;">SKU+Loc Rows Priced</div>
+            <div style="font-size:2rem;font-weight:800;line-height:1.15;margin-top:0.5rem;">{skus_priced:,}</div>
+            <div style="font-size:0.75rem;opacity:0.8;margin-top:0.1rem;">{pct_priced}% of {total:,} rows</div>
+        </div>
+
+    </div>
+    """, unsafe_allow_html=True)
+
+
 def _chart_card(title):
     st.markdown(f'<div class="chart-card"><div class="chart-title">{title}</div>', unsafe_allow_html=True)
 
@@ -388,25 +423,34 @@ def _tx_type_chart(df):
 
 
 def _style_table(df):
-    """Apply status colour coding via pandas Styler."""
+    """Apply status and variance colour coding via pandas Styler."""
     status_colors = {
         "Matched":           "color:#27AE60;font-weight:600",
         "Discrepancy":       "color:#E74C3C;font-weight:600",
         "Missing in Ending": "color:#F39C12;font-weight:600",
         "New in Ending":     "color:#8E44AD;font-weight:600",
     }
+
     def color_status(val):
         return status_colors.get(val, "")
+
+    def color_numeric(v):
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            return ""
+        if v < 0:
+            return "color:#E74C3C;font-weight:600"
+        if v > 0:
+            return "color:#27AE60;font-weight:600"
+        return ""
 
     styler = df.style
     if "Status" in df.columns:
         styler = styler.map(color_status, subset=["Status"])
-    if "Variance" in df.columns:
-        styler = styler.map(
-            lambda v: "color:#E74C3C;font-weight:600" if v < 0
-                      else ("color:#27AE60;font-weight:600" if v > 0 else ""),
-            subset=["Variance"]
-        )
+    for col in ("Variance", "Variance Value"):
+        if col in df.columns:
+            styler = styler.map(color_numeric, subset=[col])
     return styler
 
 

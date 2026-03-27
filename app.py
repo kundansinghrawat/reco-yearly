@@ -2,7 +2,11 @@ import io
 from datetime import date as _date
 
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
+
+pd.set_option("styler.render.max_elements", 10_000_000)
 
 
 def direction_to_sign(direction: str) -> int:
@@ -59,6 +63,18 @@ def parse_ending_inventory(file_bytes: bytes, filename: str) -> pd.DataFrame:
     df = df.rename(columns={"Total Qty": "Actual Ending Qty"})
     df["Actual Ending Qty"] = pd.to_numeric(df["Actual Ending Qty"], errors="coerce").fillna(0)
     return df.groupby(["SKU", "LocCode"], as_index=False)["Actual Ending Qty"].sum()
+
+
+@st.cache_data
+def parse_price(file_bytes: bytes, filename: str) -> pd.DataFrame:
+    """Parse price file with SKU + Price columns."""
+    df = _read_file(file_bytes, filename)[["SKU", "Price"]]
+    df["SKU"] = df["SKU"].astype(str).str.strip().str.upper()
+    df["Price"] = pd.to_numeric(df["Price"], errors="coerce").fillna(0)
+    return (
+        df.drop_duplicates(subset="SKU", keep="first")
+        .rename(columns={"Price": "Unit Price"})
+    )
 
 
 @st.cache_data
@@ -153,9 +169,270 @@ def reconcile(
     return df
 
 
+def _inject_css():
+    st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+    * { font-family: 'Inter', -apple-system, sans-serif !important; }
+    #MainMenu, footer, header { visibility: hidden; }
+    .stDeployButton { display: none !important; }
+    .stApp { background: #F0F4FF !important; }
+    .block-container { padding: 1.5rem 2rem 2rem !important; max-width: 1440px !important; }
+
+    /* ── Sidebar ── */
+    [data-testid="stSidebar"] { background: linear-gradient(180deg,#0D1B2A 0%,#1B2A4A 100%) !important; }
+    [data-testid="stSidebar"] section { background: transparent !important; }
+    [data-testid="stSidebar"] label { color: #94A3B8 !important; font-size: 0.78rem !important; font-weight: 500 !important; }
+    [data-testid="stSidebar"] p, [data-testid="stSidebar"] span { color: #CBD5E1 !important; }
+    [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
+        color: #F8FAFC !important; font-size: 0.68rem !important;
+        text-transform: uppercase; letter-spacing: 1.6px; font-weight: 700;
+    }
+    [data-testid="stSidebar"] hr { border-color: rgba(255,255,255,0.08) !important; margin: 0.75rem 0 !important; }
+    [data-testid="stSidebar"] [data-testid="stFileUploader"] {
+        background: rgba(255,255,255,0.05) !important;
+        border: 1px dashed rgba(255,255,255,0.15) !important;
+        border-radius: 12px !important; padding: 0.25rem !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] { background: transparent !important; }
+    [data-testid="stSidebar"] .stTextInput input {
+        background: rgba(255,255,255,0.07) !important;
+        border-color: rgba(255,255,255,0.12) !important;
+        color: white !important; border-radius: 8px !important;
+    }
+    [data-testid="stSidebar"] [data-baseweb="select"] > div {
+        background: rgba(255,255,255,0.07) !important;
+        border-color: rgba(255,255,255,0.12) !important;
+        border-radius: 8px !important;
+    }
+
+    /* ── Primary button ── */
+    div.stButton > button[kind="primary"] {
+        background: linear-gradient(135deg,#2563EB 0%,#7C3AED 100%) !important;
+        color: white !important; border: none !important; border-radius: 12px !important;
+        font-size: 1rem !important; font-weight: 700 !important;
+        padding: 0.75rem 2rem !important;
+        box-shadow: 0 8px 24px rgba(37,99,235,0.4) !important;
+        transition: all 0.3s ease !important; letter-spacing: 0.3px !important;
+    }
+    div.stButton > button[kind="primary"]:hover {
+        box-shadow: 0 12px 32px rgba(37,99,235,0.55) !important;
+        transform: translateY(-2px) !important;
+    }
+
+    /* ── Tabs ── */
+    .stTabs [data-baseweb="tab-list"] {
+        background: white; border-radius: 16px; padding: 6px;
+        box-shadow: 0 2px 16px rgba(0,0,0,0.08); gap: 4px; border: none;
+    }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 10px; color: #64748B; font-weight: 500;
+        font-size: 0.9rem; padding: 10px 24px;
+        border: none !important; background: transparent !important; transition: all 0.2s;
+    }
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(135deg,#2563EB,#7C3AED) !important;
+        color: white !important; font-weight: 700 !important;
+        box-shadow: 0 4px 14px rgba(37,99,235,0.35) !important;
+    }
+
+    /* ── Download button ── */
+    div.stDownloadButton > button {
+        background: white !important; color: #2563EB !important;
+        border: 2px solid #2563EB !important; border-radius: 10px !important;
+        font-weight: 600 !important; transition: all 0.2s !important;
+    }
+    div.stDownloadButton > button:hover { background: #EFF6FF !important; }
+
+    /* ── Dataframe ── */
+    [data-testid="stDataFrame"] {
+        border-radius: 14px !important; overflow: hidden !important;
+        box-shadow: 0 2px 16px rgba(0,0,0,0.07) !important;
+    }
+
+    /* ── Chart cards ── */
+    .chart-card {
+        background: white; border-radius: 16px; padding: 1.25rem 1.5rem;
+        box-shadow: 0 2px 16px rgba(0,0,0,0.07); margin-bottom: 1rem;
+    }
+    .chart-title {
+        font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1.4px;
+        color: #94A3B8; font-weight: 700; margin-bottom: 0.5rem;
+    }
+    .stAlert { border-radius: 12px !important; }
+    </style>
+    """, unsafe_allow_html=True)
+
+
+def _kpi_cards(total, matched, pct_matched, discrepancies, missing, new_in_ending):
+    st.markdown(f"""
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:1rem;margin-bottom:1.5rem;">
+
+        <div style="background:linear-gradient(135deg,#1E3A8A,#2563EB);border-radius:18px;
+                    padding:1.4rem 1.5rem;box-shadow:0 8px 24px rgba(37,99,235,0.3);color:white;position:relative;overflow:hidden;">
+            <div style="position:absolute;top:-15px;right:-15px;width:80px;height:80px;
+                        border-radius:50%;background:rgba(255,255,255,0.08);"></div>
+            <div style="font-size:0.65rem;text-transform:uppercase;letter-spacing:1.4px;opacity:0.75;font-weight:700;">Total SKU + Location</div>
+            <div style="font-size:2.3rem;font-weight:800;line-height:1.15;margin-top:0.5rem;">{total:,}</div>
+        </div>
+
+        <div style="background:linear-gradient(135deg,#064E3B,#10B981);border-radius:18px;
+                    padding:1.4rem 1.5rem;box-shadow:0 8px 24px rgba(16,185,129,0.3);color:white;position:relative;overflow:hidden;">
+            <div style="position:absolute;top:-15px;right:-15px;width:80px;height:80px;
+                        border-radius:50%;background:rgba(255,255,255,0.08);"></div>
+            <div style="font-size:0.65rem;text-transform:uppercase;letter-spacing:1.4px;opacity:0.75;font-weight:700;">Matched</div>
+            <div style="font-size:2.3rem;font-weight:800;line-height:1.15;margin-top:0.5rem;">{pct_matched}%</div>
+            <div style="font-size:0.75rem;opacity:0.8;margin-top:0.1rem;">{matched:,} records</div>
+        </div>
+
+        <div style="background:linear-gradient(135deg,#7F1D1D,#EF4444);border-radius:18px;
+                    padding:1.4rem 1.5rem;box-shadow:0 8px 24px rgba(239,68,68,0.3);color:white;position:relative;overflow:hidden;">
+            <div style="position:absolute;top:-15px;right:-15px;width:80px;height:80px;
+                        border-radius:50%;background:rgba(255,255,255,0.08);"></div>
+            <div style="font-size:0.65rem;text-transform:uppercase;letter-spacing:1.4px;opacity:0.75;font-weight:700;">Discrepancies</div>
+            <div style="font-size:2.3rem;font-weight:800;line-height:1.15;margin-top:0.5rem;">{discrepancies:,}</div>
+        </div>
+
+        <div style="background:linear-gradient(135deg,#78350F,#F59E0B);border-radius:18px;
+                    padding:1.4rem 1.5rem;box-shadow:0 8px 24px rgba(245,158,11,0.3);color:white;position:relative;overflow:hidden;">
+            <div style="position:absolute;top:-15px;right:-15px;width:80px;height:80px;
+                        border-radius:50%;background:rgba(255,255,255,0.08);"></div>
+            <div style="font-size:0.65rem;text-transform:uppercase;letter-spacing:1.4px;opacity:0.75;font-weight:700;">Missing in Ending</div>
+            <div style="font-size:2.3rem;font-weight:800;line-height:1.15;margin-top:0.5rem;">{missing:,}</div>
+        </div>
+
+        <div style="background:linear-gradient(135deg,#4C1D95,#8B5CF6);border-radius:18px;
+                    padding:1.4rem 1.5rem;box-shadow:0 8px 24px rgba(139,92,246,0.3);color:white;position:relative;overflow:hidden;">
+            <div style="position:absolute;top:-15px;right:-15px;width:80px;height:80px;
+                        border-radius:50%;background:rgba(255,255,255,0.08);"></div>
+            <div style="font-size:0.65rem;text-transform:uppercase;letter-spacing:1.4px;opacity:0.75;font-weight:700;">New in Ending</div>
+            <div style="font-size:2.3rem;font-weight:800;line-height:1.15;margin-top:0.5rem;">{new_in_ending:,}</div>
+        </div>
+
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def _chart_card(title):
+    st.markdown(f'<div class="chart-card"><div class="chart-title">{title}</div>', unsafe_allow_html=True)
+
+def _chart_card_end():
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+def _status_donut(df):
+    counts = df["Status"].value_counts().reset_index()
+    counts.columns = ["Status", "Count"]
+    color_map = {"Matched": "#10B981", "Discrepancy": "#EF4444",
+                 "Missing in Ending": "#F59E0B", "New in Ending": "#8B5CF6"}
+    colors = [color_map.get(s, "#94A3B8") for s in counts["Status"]]
+    total = counts["Count"].sum()
+    matched_pct = round(df[df["Status"] == "Matched"].shape[0] / total * 100, 1) if total else 0
+
+    fig = go.Figure(go.Pie(
+        labels=counts["Status"], values=counts["Count"], hole=0.65,
+        marker=dict(colors=colors, line=dict(color="white", width=2)),
+        textinfo="percent", textfont_size=11,
+        hovertemplate="<b>%{label}</b><br>%{value:,} records (%{percent})<extra></extra>",
+    ))
+    fig.update_layout(
+        annotations=[dict(text=f"<b>{matched_pct}%</b><br><span style='font-size:11px'>Matched</span>",
+                          x=0.5, y=0.5, font_size=15, showarrow=False, font_color="#1E293B")],
+        legend=dict(orientation="v", yanchor="middle", y=0.5, x=1.02, font_size=12),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(t=5, b=5, l=5, r=5), height=300, showlegend=True,
+    )
+    return fig
+
+
+def _variance_histogram(df):
+    disc = df[df["Variance"] != 0][["Variance"]].copy()
+    if disc.empty:
+        return None
+    fig = px.histogram(disc, x="Variance", nbins=min(60, len(disc)),
+                       color_discrete_sequence=["#2563EB"])
+    fig.update_traces(marker_line_color="#1E3A8A", marker_line_width=0.5,
+                      hovertemplate="Variance: %{x}<br>Count: %{y}<extra></extra>")
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        height=300, margin=dict(t=5, b=40, l=40, r=10),
+        xaxis=dict(gridcolor="#E2E8F0", title="Variance (Expected − Actual)", linecolor="#E2E8F0"),
+        yaxis=dict(gridcolor="#E2E8F0", title="Count", linecolor="#E2E8F0"),
+        showlegend=False, bargap=0.05,
+    )
+    return fig
+
+
+def _tx_type_chart(df):
+    tx_cols = [c for c in df.columns if c.startswith("TX: ")]
+    if not tx_cols:
+        return None
+    totals = df[tx_cols].sum().reset_index()
+    totals.columns = ["Type", "Net Qty"]
+    totals["Type"] = totals["Type"].str.replace("TX: ", "", regex=False)
+    totals = totals.sort_values("Net Qty")
+    totals["Color"] = totals["Net Qty"].apply(lambda v: "#EF4444" if v < 0 else "#10B981")
+    fig = go.Figure(go.Bar(
+        x=totals["Net Qty"], y=totals["Type"], orientation="h",
+        marker_color=totals["Color"], marker_line_width=0,
+        hovertemplate="<b>%{y}</b><br>Net Qty: %{x:,}<extra></extra>",
+    ))
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        height=300, margin=dict(t=5, b=10, l=10, r=10),
+        xaxis=dict(gridcolor="#E2E8F0", linecolor="#E2E8F0", title="Net Quantity"),
+        yaxis=dict(gridcolor="rgba(0,0,0,0)"),
+        showlegend=False,
+    )
+    return fig
+
+
+def _style_table(df):
+    """Apply status colour coding via pandas Styler."""
+    status_colors = {
+        "Matched":           "color:#27AE60;font-weight:600",
+        "Discrepancy":       "color:#E74C3C;font-weight:600",
+        "Missing in Ending": "color:#F39C12;font-weight:600",
+        "New in Ending":     "color:#8E44AD;font-weight:600",
+    }
+    def color_status(val):
+        return status_colors.get(val, "")
+
+    styler = df.style
+    if "Status" in df.columns:
+        styler = styler.map(color_status, subset=["Status"])
+    if "Variance" in df.columns:
+        styler = styler.map(
+            lambda v: "color:#E74C3C;font-weight:600" if v < 0
+                      else ("color:#27AE60;font-weight:600" if v > 0 else ""),
+            subset=["Variance"]
+        )
+    return styler
+
+
 def main():
-    st.set_page_config(page_title="Inventory Reconciliation", layout="wide")
-    st.title("Inventory Reconciliation Dashboard")
+    st.set_page_config(page_title="Inventory Reconciliation", layout="wide", page_icon="📦")
+    _inject_css()
+
+    # ── Header ───────────────────────────────────────────────────────
+    st.markdown("""
+    <div style="margin-bottom:1.5rem;">
+        <div style="font-size:1.6rem;font-weight:700;color:#1B2A4A;line-height:1.2;">
+            📦 Inventory Reconciliation
+        </div>
+        <div style="font-size:0.88rem;color:#6B7C93;margin-top:0.3rem;">
+            Upload your inventory and transaction files, then run reconciliation to surface variances.
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Sidebar brand ────────────────────────────────────────────────
+    st.sidebar.markdown("""
+    <div style="padding:1rem 0.5rem 0.75rem;margin-bottom:0.5rem;">
+        <div style="font-size:1.25rem;font-weight:800;color:#F8FAFC;letter-spacing:-0.3px;">📦 RECO</div>
+        <div style="font-size:0.7rem;color:#64748B;letter-spacing:1.6px;text-transform:uppercase;font-weight:600;">Inventory Reconciliation</div>
+    </div>
+    """, unsafe_allow_html=True)
 
     # ── File Uploads ─────────────────────────────────────────────────
     st.sidebar.header("Upload Files")
@@ -174,17 +451,33 @@ def main():
 
     all_uploaded = starting_file and ending_file and tx_files
     if not all_uploaded:
-        st.info(
-            "**Upload all three file sets in the sidebar to begin:**\n\n"
-            "1. Starting Inventory (xlsx or csv)\n"
-            "2. Ending Inventory (xlsx or csv)\n"
-            "3. Transaction files — select all files at once (xlsx or csv)"
-        )
+        st.markdown("""
+        <div style="background:white;border-radius:14px;padding:2rem 2.5rem;
+                    box-shadow:0 2px 10px rgba(0,0,0,0.07);max-width:520px;margin:2rem auto;text-align:center;">
+            <div style="font-size:2.5rem;margin-bottom:1rem;">📂</div>
+            <div style="font-size:1.1rem;font-weight:600;color:#1B2A4A;margin-bottom:0.5rem;">Upload Files to Begin</div>
+            <div style="font-size:0.85rem;color:#6B7C93;line-height:1.7;">
+                1. Starting Inventory (xlsx or csv)<br>
+                2. Ending Inventory (xlsx or csv)<br>
+                3. All Transaction files (xlsx or csv)
+            </div>
+            <div style="margin-top:1rem;font-size:0.8rem;color:#A0AEC0;">Use the sidebar on the left ←</div>
+        </div>
+        """, unsafe_allow_html=True)
         st.stop()
 
     st.sidebar.divider()
 
-    st.success(f"✅ {len(tx_files)} transaction file(s) uploaded. Ready to reconcile.")
+    st.markdown(f"""
+    <div style="background:white;border-radius:12px;padding:1rem 1.5rem;
+                box-shadow:0 1px 6px rgba(0,0,0,0.06);margin-bottom:1rem;
+                display:flex;align-items:center;gap:0.75rem;">
+        <span style="font-size:1.3rem;">✅</span>
+        <span style="color:#2C3E50;font-size:0.9rem;font-weight:500;">
+            <b>{starting_file.name}</b> · <b>{ending_file.name}</b> · <b>{len(tx_files)} transaction file(s)</b> ready
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
     run_clicked = st.button("▶ Run Reconciliation", type="primary", use_container_width=True)
 
     if run_clicked:
@@ -247,7 +540,14 @@ def main():
 
     # ── Tabs ─────────────────────────────────────────────────────────
     tab1, tab2, tab3, tab4 = st.tabs(
-        ["Summary", "Full Detail", "Discrepancies", "Transaction Breakdown"]
+        ["📊  Summary", "📋  Full Detail", "⚠️  Discrepancies", "🔍  Transaction Breakdown"]
+    )
+
+    tx_type_cols = [c for c in filtered_recon.columns if c.startswith("TX: ")]
+    detail_cols = (
+        ["SKU", "LocCode", "Starting Qty"]
+        + tx_type_cols
+        + ["Net Transactions", "Expected Ending Qty", "Actual Ending Qty", "Variance", "Status"]
     )
 
     with tab1:
@@ -258,51 +558,41 @@ def main():
         new_in_ending = int((filtered_recon["Status"] == "New in Ending").sum())
         pct_matched = round(matched / total * 100, 1) if total > 0 else 0.0
 
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Total SKU+Location", total)
-        c2.metric("Matched", f"{pct_matched}%")
-        c3.metric("Discrepancies", discrepancies)
-        c4.metric("Missing in Ending", missing)
-        c5.metric("New in Ending", new_in_ending)
+        _kpi_cards(total, matched, pct_matched, discrepancies, missing, new_in_ending)
 
-        st.divider()
         col1, col2 = st.columns(2)
-
         with col1:
-            st.subheader("Status Breakdown")
-            status_counts = (
-                filtered_recon["Status"]
-                .value_counts()
-                .rename_axis("Status")
-                .reset_index(name="Count")
-            )
-            st.bar_chart(status_counts.set_index("Status")["Count"])
+            _chart_card("Status Breakdown")
+            st.plotly_chart(_status_donut(filtered_recon), use_container_width=True)
+            _chart_card_end()
 
         with col2:
-            st.subheader("Variance Distribution (non-zero only)")
-            disc_variances = filtered_recon[filtered_recon["Variance"] != 0]["Variance"]
-            if not disc_variances.empty:
-                st.bar_chart(disc_variances.value_counts().sort_index())
+            _chart_card("Variance Distribution (non-zero)")
+            hist = _variance_histogram(filtered_recon)
+            if hist is not None:
+                st.plotly_chart(hist, use_container_width=True)
             else:
-                st.info("No variances found — everything matches!")
+                st.success("Everything matches — no variances found!")
+            _chart_card_end()
 
-    tx_type_cols = [c for c in filtered_recon.columns if c.startswith("TX: ")]
-    detail_cols = (
-        ["SKU", "LocCode", "Starting Qty"]
-        + tx_type_cols
-        + ["Net Transactions", "Expected Ending Qty", "Actual Ending Qty", "Variance", "Status"]
-    )
+        tx_bar = _tx_type_chart(filtered_recon)
+        if tx_bar is not None:
+            _chart_card("Net Quantity by Transaction Type")
+            st.plotly_chart(tx_bar, use_container_width=True)
+            _chart_card_end()
 
     # ── Tab 2: Full Detail ───────────────────────────────────────────
     with tab2:
-        status_opts = ["All"] + sorted(filtered_recon["Status"].unique().tolist())
-        status_filter = st.selectbox("Filter by Status", status_opts, key="detail_status")
+        c1, c2 = st.columns([2, 6])
+        with c1:
+            status_opts = ["All"] + sorted(filtered_recon["Status"].unique().tolist())
+            status_filter = st.selectbox("Filter by Status", status_opts, key="detail_status")
         detail_df = (
-            filtered_recon
-            if status_filter == "All"
+            filtered_recon if status_filter == "All"
             else filtered_recon[filtered_recon["Status"] == status_filter]
         )
-        st.dataframe(detail_df[detail_cols], use_container_width=True, height=600)
+        st.markdown(f"<div style='font-size:0.8rem;color:#8896A5;margin-bottom:0.5rem;'>{len(detail_df):,} rows</div>", unsafe_allow_html=True)
+        st.dataframe(_style_table(detail_df[detail_cols]), use_container_width=True, height=580)
 
     # ── Tab 3: Discrepancies ─────────────────────────────────────────
     with tab3:
@@ -313,19 +603,13 @@ def main():
             .sort_values("AbsVariance", ascending=False)
             .drop(columns=["AbsVariance"])
         )
-        st.write(f"**{len(disc_df)} discrepant rows**")
-        st.dataframe(
-            disc_df[detail_cols],
-            use_container_width=True,
-            height=600,
-        )
-        csv_bytes = disc_df[detail_cols].to_csv(index=False).encode("utf-8")
-        st.download_button(
-            label="Download Discrepancies as CSV",
-            data=csv_bytes,
-            file_name="discrepancies.csv",
-            mime="text/csv",
-        )
+        c1, c2 = st.columns([6, 2])
+        with c1:
+            st.markdown(f"<div style='font-size:0.8rem;color:#E74C3C;font-weight:600;margin-bottom:0.5rem;'>{len(disc_df):,} discrepant rows</div>", unsafe_allow_html=True)
+        with c2:
+            csv_bytes = disc_df[detail_cols].to_csv(index=False).encode("utf-8")
+            st.download_button("⬇ Download CSV", data=csv_bytes, file_name="discrepancies.csv", mime="text/csv", use_container_width=True)
+        st.dataframe(_style_table(disc_df[detail_cols]), use_container_width=True, height=580)
 
     # ── Tab 4: Transaction Breakdown ─────────────────────────────────
     with tab4:

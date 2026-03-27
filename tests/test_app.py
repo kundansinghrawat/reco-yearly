@@ -4,7 +4,7 @@ import sys
 import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from app import direction_to_sign, reconcile
+from app import direction_to_sign, reconcile, parse_price
 
 
 # --- direction_to_sign tests ---
@@ -123,3 +123,25 @@ def test_reconcile_sku_normalization():
     result = reconcile(starting, ending, tx)
     row = result[(result["SKU"] == "SKU1") & (result["LocCode"] == "LOC1")].iloc[0]
     assert row["Status"] == "Matched"
+
+
+# --- parse_price tests ---
+
+def test_parse_price_normalizes_sku():
+    csv_bytes = b"SKU,Price\n sku1 ,10.5\nSKU2,20.0\n"
+    result = parse_price(csv_bytes, "price.csv")
+    assert "SKU1" in result["SKU"].values
+    assert result.loc[result["SKU"] == "SKU1", "Unit Price"].iloc[0] == 10.5
+
+
+def test_parse_price_deduplicates_keeps_first():
+    csv_bytes = b"SKU,Price\nSKU1,10.0\nSKU1,99.0\n"
+    result = parse_price(csv_bytes, "price.csv")
+    assert len(result[result["SKU"] == "SKU1"]) == 1
+    assert result.loc[result["SKU"] == "SKU1", "Unit Price"].iloc[0] == 10.0
+
+
+def test_parse_price_non_numeric_price_becomes_zero():
+    csv_bytes = b"SKU,Price\nSKU1,N/A\n"
+    result = parse_price(csv_bytes, "price.csv")
+    assert result.loc[result["SKU"] == "SKU1", "Unit Price"].iloc[0] == 0.0

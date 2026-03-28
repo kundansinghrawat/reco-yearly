@@ -895,22 +895,41 @@ def main():
 
         # ── Tab 4: TX Breakdown ──────────────────────────────────────────
         with tab4:
+            # ── Download all transactions ────────────────────────────
+            tx_export_cols = ["SKU", "LocCode", "Transaction Date", "Transaction Type",
+                              "Quantity", "Direction", "Reference No", "Net Qty"]
+            avail_tx_cols = [c for c in tx_export_cols if c in filtered_tx.columns]
+            ta1, ta2 = st.columns([6, 2])
+            with ta1:
+                st.markdown(
+                    f'<div class="row-count">{len(filtered_tx):,} total transactions</div>',
+                    unsafe_allow_html=True,
+                )
+            with ta2:
+                st.download_button(
+                    "\u2b07\ufe0f\u2002All Transactions CSV",
+                    data=filtered_tx[avail_tx_cols].to_csv(index=False).encode("utf-8"),
+                    file_name="all_transactions.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                )
+
+            st.divider()
+
+            # ── Per SKU+Location drill-down ──────────────────────────
             key_options = sorted(
                 (filtered_recon["SKU"] + " | " + filtered_recon["LocCode"]).tolist()
             )
             if not key_options:
                 st.info("No data matches the current filters.")
             else:
-                selected_key = st.selectbox("Select SKU + Location", key_options)
+                selected_key = st.selectbox("Drill down: SKU + Location", key_options)
                 sel_sku, sel_loc = [x.strip() for x in selected_key.split("|", maxsplit=1)]
                 tx_detail = filtered_tx[
                     (filtered_tx["SKU"] == sel_sku) & (filtered_tx["LocCode"] == sel_loc)
                 ].copy()
                 if tx_detail.empty:
-                    st.info(
-                        f"No transactions found for **{sel_sku}** at **{sel_loc}** "
-                        f"in the selected date range."
-                    )
+                    st.info(f"No transactions found for **{sel_sku}** at **{sel_loc}**.")
                 else:
                     st.markdown(
                         f'<div class="row-count">{len(tx_detail)} transactions for '
@@ -923,7 +942,7 @@ def main():
                                    "Quantity", "Direction", "Reference No"]]
                         .sort_values("Transaction Date"),
                         use_container_width=True,
-                        height=500,
+                        height=460,
                     )
 
         # ── Tab 5: Price Analysis ────────────────────────────────────────

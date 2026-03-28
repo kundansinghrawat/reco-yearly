@@ -238,20 +238,56 @@ def _css():
         background: #0C1425 !important;
         border-color: rgba(255,255,255,0.07) !important;
         border-radius: 10px !important;
+        min-height: 42px !important;
+        flex-wrap: wrap !important;
     }
     [data-baseweb="select"] span { color: #CBD5E1 !important; }
+    [data-baseweb="select"] input { color: #F1F5F9 !important; min-width: 60px !important; }
+
+    /* ── Dropdown menu — full width, no clipping ── */
     [data-baseweb="menu"] {
         background: #111827 !important;
         border: 1px solid rgba(255,255,255,0.1) !important;
         border-radius: 10px !important;
+        max-height: 280px !important;
+        overflow-y: auto !important;
+    }
+    [data-baseweb="option"] {
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        font-size: 0.83rem !important;
+        color: #94A3B8 !important;
+        padding: 8px 14px !important;
     }
     [data-baseweb="option"]:hover { background: rgba(99,102,241,0.12) !important; }
+
+    /* ── Selected tags — no overflow ── */
     [data-baseweb="tag"] {
         background: rgba(99,102,241,0.13) !important;
         border-color: rgba(99,102,241,0.28) !important;
         border-radius: 6px !important;
+        max-width: 140px !important;
+        overflow: hidden !important;
     }
-    [data-baseweb="tag"] span { color: #818CF8 !important; }
+    [data-baseweb="tag"] span {
+        color: #818CF8 !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        display: block !important;
+        max-width: 110px !important;
+    }
+
+    /* ── Selectbox single value ── */
+    [data-baseweb="select"] [data-testid="stMarkdownContainer"] p,
+    [data-baseweb="single-value"] {
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        color: #F1F5F9 !important;
+    }
+
     .stSelectbox label, .stMultiSelect label {
         color: #374151 !important;
         font-size: 0.7rem !important;
@@ -725,22 +761,12 @@ def main():
 
         # ── Filters ─────────────────────────────────────────────────────
         _section("Filters")
-        fc1, fc2, fc3 = st.columns([3, 2, 3])
+        fc1, fc2 = st.columns([4, 2])
         with fc1:
             loc_options = sorted(recon["LocCode"].unique().tolist())
             selected_locs = st.multiselect("Location", loc_options, default=loc_options)
         with fc2:
             sku_filter = st.text_input("SKU Search").strip().upper()
-        with fc3:
-            _date_min = transactions["Transaction Date"].min()
-            _date_max = transactions["Transaction Date"].max()
-            safe_min = _date_min.date() if pd.notna(_date_min) else _date(2025, 1, 1)
-            safe_max = _date_max.date() if pd.notna(_date_max) else _date.today()
-            date_range = st.date_input(
-                "Transaction Date Range",
-                value=[safe_min, safe_max],
-                min_value=safe_min, max_value=safe_max,
-            )
 
         st.divider()
 
@@ -758,11 +784,6 @@ def main():
         if sku_filter:
             filtered_tx = filtered_tx[
                 filtered_tx["SKU"].str.contains(sku_filter, na=False, regex=False)
-            ]
-        if len(date_range) == 2:
-            filtered_tx = filtered_tx[
-                (filtered_tx["Transaction Date"] >= pd.Timestamp(date_range[0])) &
-                (filtered_tx["Transaction Date"] <= pd.Timestamp(date_range[1]))
             ]
 
         tx_type_cols = [c for c in filtered_recon.columns if c.startswith("TX: ")]
